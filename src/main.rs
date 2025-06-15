@@ -1,7 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
-#![allow(rustdoc::missing_crate_level_docs)] // it's an example
 
+use dirs::config_dir;
 use eframe::egui;
+use serde::{Deserialize, Serialize};
+use std::fs::{File, create_dir_all};
+use std::io::{Read, Write};
 use std::path::PathBuf;
 
 fn main() -> eframe::Result {
@@ -21,9 +24,19 @@ fn main() -> eframe::Result {
     )
 }
 
+#[derive(Serialize, Deserialize, Debug)]
 struct UserSetup {
     calculix_bin_path: PathBuf,
     project_dir_path: PathBuf,
+}
+
+impl Default for UserSetup {
+    fn default() -> Self {
+        Self {
+            calculix_bin_path: PathBuf::from(""),
+            project_dir_path: PathBuf::from(""),
+        }
+    }
 }
 
 #[derive(PartialEq)]
@@ -41,19 +54,43 @@ struct MainApp {
 impl Default for MainApp {
     fn default() -> Self {
         Self {
-            user_setup: UserSetup {
-                calculix_bin_path: PathBuf::from(
-                    "/media/qhuss/76a9dfaf-c78f-4c2f-a48c-5a6b936cdb8d/CalculiX/ccx_2.19_MT",
-                ),
-                project_dir_path: PathBuf::from(
-                    "/media/qhuss/76a9dfaf-c78f-4c2f-a48c-5a6b936cdb8d/PrePoMax/PrePoMax v2.3.4 dev/Temp/",
-                ),
-            },
+            user_setup: Self::load_config(),
             solver_output: String::from(
                 "TEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST",
             ),
             ansicht: Ansicht::SolverOutput,
         }
+    }
+}
+
+impl MainApp {
+    fn load_config() -> UserSetup {
+        let config_dir = config_dir().unwrap().join("ccx_runner_rs");
+
+        if !config_dir.exists() {
+            create_dir_all(&config_dir).unwrap();
+        };
+
+        let config_file = config_dir.join("config.json");
+
+        if config_file.exists() {
+            let mut file = File::open(config_file).unwrap();
+            let mut contents = String::new();
+            file.read_to_string(&mut contents).unwrap();
+            serde_json::from_str(&contents).unwrap_or_default()
+        } else {
+            UserSetup::default()
+        }
+    }
+
+    fn save_config(&self) -> Result<(), std::io::Error> {
+        let config_dir = config_dir().unwrap().join("ccx_runner_rs");
+        let config_file = config_dir.join("config.json");
+        let json = serde_json::to_string_pretty(&self.user_setup).unwrap();
+        let mut file = File::create(config_file)?;
+        file.write_all(json.as_bytes())?;
+
+        Ok(())
     }
 }
 
@@ -77,6 +114,13 @@ impl eframe::App for MainApp {
                     self.user_setup.project_dir_path = PathBuf::from(project_dir_str);
                 }
             }
+
+            if ui.button("Run Analysis").clicked() {
+                match self.save_config() {
+                    Ok(_) => println!("config saved!"),
+                    Err(e) => println!("{}", e),
+                }
+            };
 
             // Tabs
             ui.add_space(10.);
