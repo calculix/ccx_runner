@@ -647,7 +647,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ccx_runner_rs"
+name = "ccx_runner"
 version = "0.1.0"
 dependencies = [
  "dirs",

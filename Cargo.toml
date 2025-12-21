@@ -1,7 +1,9 @@
 [package]
-name = "ccx_runner_rs"
+name = "ccx_runner"
+authors = ["Quentin Huss"]
 version = "0.1.0"
 edition = "2021"
+readme = "README.md"
 
 [dependencies]
 dirs = "5.0.1"

@@ -67,6 +67,7 @@ struct StepInfo {
     total_time: f64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct ResidualData {
     step: u32,
@@ -213,7 +214,6 @@ impl eframe::App for MainApp {
                     "GitHub",
                     "https://github.com/KwentiN-ui/ccx_runner_rs",
                 );
-                ui.separator();
                 egui::warn_if_debug_build(ui);
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
