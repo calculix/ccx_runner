@@ -80,6 +80,7 @@ enum SolverMessage {
     NewStepInfo(StepInfo),
     UpdateStepInfo(StepInfo),
     Residual(ResidualData),
+    ResetResiduals,
 }
 
 struct MainApp {
@@ -182,6 +183,7 @@ impl eframe::App for MainApp {
                             self.solver_output_buffer.push(line);
                         }
                         SolverMessage::Residual(data) => self.residual_data.push(data),
+                        SolverMessage::ResetResiduals => self.residual_data.clear(),
                         SolverMessage::NewStepInfo(info) => self.step_info.push(info),
                         SolverMessage::UpdateStepInfo(info) => {
                             if let Some(last) = self.step_info.last_mut() {
@@ -195,11 +197,19 @@ impl eframe::App for MainApp {
                     }
                     Err(mpsc::TryRecvError::Disconnected) => {
                         // The sender has been dropped, meaning the reader thread and process are finished.
+                        let elapsed_time = if let Some(start_time) = self.start_time {
+                            start_time.elapsed().as_secs_f32()
+                        } else {
+                            0.0
+                        };
                         self.is_running = false;
                         self.line_receiver = None;
                         self.solver_process = None; // The Child process is dropped here, reaping it.
                         self.start_time = None;
-                        self.solver_output_buffer.push("\n--- Analysis Finished ---\n".to_string());
+                        self.solver_output_buffer.push(format!(
+                            "\n--- Analysis Finished in {:.1}s ---\n",
+                            elapsed_time
+                        ));
                         break;
                     }
                 }
@@ -373,6 +383,8 @@ impl eframe::App for MainApp {
                                                } else if let Some(info) = current_step_info.as_mut() {
                                                     let mut updated = false;
                                                     if line.starts_with(" increment ") {
+                                                        if sender_clone.send(SolverMessage::ResetResiduals).is_err() { break; }
+                                                        total_iterations_for_residual = 0;
                                                         let parts: Vec<&str> = line.split_whitespace().collect();
                                                         if parts.len() >= 4 {
                                                             if let (Ok(inc), Ok(att)) = (parts[1].parse::<u32>(), parts[3].parse::<u32>()) {
