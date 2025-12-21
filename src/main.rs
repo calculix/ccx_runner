@@ -55,12 +55,14 @@ enum Ansicht {
     Overview,
 }
 
-#[derive(Debug, Clone)]
-struct StepData {
+#[derive(Debug, Clone, Default)]
+struct StepInfo {
     step: u32,
-    total_time: f64,
+    increment: u32,
+    attempt: u32,
+    iterations: u32,
     step_time: f64,
-    inc_time: f64,
+    total_time: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -72,7 +74,8 @@ struct ResidualData {
 
 enum SolverMessage {
     Line(String),
-    Step(StepData),
+    NewStepInfo(StepInfo),
+    UpdateStepInfo(StepInfo),
     Residual(ResidualData),
 }
 
@@ -83,8 +86,8 @@ struct MainApp {
     line_receiver: Option<Receiver<SolverMessage>>,
     is_running: bool,
     solver_output_buffer: String,
-    step_data: Vec<StepData>,
     residual_data: Vec<ResidualData>,
+    step_info: Vec<StepInfo>,
     available_inp_files: Vec<PathBuf>,
     selected_inp_file: Option<PathBuf>,
 }
@@ -101,8 +104,8 @@ impl MainApp {
             line_receiver: None,
             is_running: false,
             solver_output_buffer: String::new(),
-            step_data: Vec::new(),
             residual_data: Vec::new(),
+            step_info: Vec::new(),
             available_inp_files: Vec::new(),
             selected_inp_file: None,
         };
@@ -175,8 +178,13 @@ impl eframe::App for MainApp {
                             self.solver_output_buffer.push_str(&line);
                             self.solver_output_buffer.push('\n');
                         }
-                        SolverMessage::Step(data) => self.step_data.push(data),
                         SolverMessage::Residual(data) => self.residual_data.push(data),
+                        SolverMessage::NewStepInfo(info) => self.step_info.push(info),
+                        SolverMessage::UpdateStepInfo(info) => {
+                            if let Some(last) = self.step_info.last_mut() {
+                                *last = info;
+                            }
+                        }
                     },
                     Err(mpsc::TryRecvError::Empty) => {
                         // No more messages in the channel for now.
@@ -261,8 +269,8 @@ impl eframe::App for MainApp {
             } else {
                 if ui.button("Run Analysis").clicked() {
                     match self.save_config() {
-                        Ok(_) => println!("config saved!"),
-                        Err(e) => println!("{}", e),
+                        Ok(_) => {},
+                        Err(e) => panic!("{}", e),
                     }
 
                     if let Some(inp_path) = self.selected_inp_file.clone() {
@@ -271,8 +279,8 @@ impl eframe::App for MainApp {
                         self.line_receiver = Some(receiver);
                         self.is_running = true;
                         self.solver_output_buffer.clear();
-                        self.step_data.clear();
                         self.residual_data.clear();
+                        self.step_info.clear();
 
                         let ccx_path = self.user_setup.calculix_bin_path.clone();
                         let project_dir = self.user_setup.project_dir_path.clone();
@@ -296,67 +304,84 @@ impl eframe::App for MainApp {
                                 let sender_clone = sender.clone();
 
                                 thread::spawn(move || {
-                                    let mut current_step = 0;
-                                    let mut total_iterations = 0;
-                                    let mut prev_line = String::new();
-                                    for line in reader.lines() {
-                                        match line {
-                                            Ok(line) => {
-                                                if line.starts_with(" STEP") {
-                                                    let parts: Vec<&str> = line.split_whitespace().collect();
-                                                    if parts.len() >= 8 {
-                                                        if let (Ok(step), Ok(total_time), Ok(step_time)) = (
-                                                            parts[1].parse::<u32>(),
-                                                            parts[4].parse::<f64>(),
-                                                            parts[7].parse::<f64>(),
-                                                        ) {
-                                                            current_step = step;
-                                                            let mut inc_time = 0.0;
-                                                            if prev_line.contains("Increment") {
-                                                                let prev_parts: Vec<&str> = prev_line.split_whitespace().collect();
-                                                                if prev_parts.len() >= 6 {
-                                                                    if let Ok(val) = prev_parts[5].parse::<f64>() {
-                                                                        inc_time = val;
-                                                                    }
-                                                                }
-                                                            }
-                                                            let step_data = StepData {
-                                                                step,
-                                                                total_time,
-                                                                step_time,
-                                                                inc_time,
-                                                            };
-                                                            sender_clone.send(SolverMessage::Step(step_data)).unwrap();
-                                                        }
-                                                    }
-                                                } else if line.contains("RESIDUAL") {
-                                                    let parts: Vec<&str> = line.split_whitespace().collect();
-                                                    if parts.len() >= 4 {
-                                                        if let Ok(residual) = parts[3].parse::<f64>()
-                                                        {
-                                                            total_iterations += 1;
-                                                            let residual_data = ResidualData {
-                                                                step: current_step,
-                                                                total_iteration: total_iterations,
-                                                                residual,
-                                                            };
-                                                            sender_clone.send(SolverMessage::Residual(residual_data)).unwrap();
-                                                        }
-                                                    }
-                                                }
+                                   let mut current_step_info: Option<StepInfo> = None;
+                                   let mut total_iterations_for_residual = 0;
 
-                                                prev_line = line.clone();
-                                                if sender_clone.send(SolverMessage::Line(line)).is_err() {
-                                                    break; // Receiver has been dropped
-                                                }
-                                            }
-                                            Err(e) => {
-                                                eprintln!("Error reading line: {}", e);
-                                                break;
-                                            }
-                                        }
-                                    }
-                                });
+                                   for line_result in reader.lines() {
+                                       match line_result {
+                                           Ok(line) => {
+                                               if line.starts_with(" STEP") {
+                                                   if let Some(step_str) = line.split_whitespace().last() {
+                                                       if let Ok(step_num) = step_str.parse::<u32>() {
+                                                            let new_info = StepInfo {
+                                                                step: step_num,
+                                                                ..Default::default()
+                                                            };
+                                                            current_step_info = Some(new_info.clone());
+                                                            if sender_clone.send(SolverMessage::NewStepInfo(new_info)).is_err() { break; }
+                                                       }
+                                                   }
+                                               } else if let Some(info) = current_step_info.as_mut() {
+                                                    let mut updated = false;
+                                                    if line.starts_with(" increment ") {
+                                                        let parts: Vec<&str> = line.split_whitespace().collect();
+                                                        if parts.len() >= 4 {
+                                                            if let (Ok(inc), Ok(att)) = (parts[1].parse::<u32>(), parts[3].parse::<u32>()) {
+                                                                info.increment = inc;
+                                                                info.attempt = att;
+                                                                info.iterations = 0; // Reset for new attempt
+                                                                updated = true;
+                                                           }
+                                                       }
+                                                    } else if line.trim().starts_with("iteration ") {
+                                                        info.iterations += 1;
+                                                        updated = true;
+                                                    } else if line.starts_with(" actual step time=") {
+                                                        if let Some(val_str) = line.split('=').nth(1) {
+                                                            if let Ok(val) = val_str.trim().parse::<f64>() {
+                                                                info.step_time = val;
+                                                                updated = true;
+                                                           }
+                                                       }
+                                                    } else if line.starts_with(" actual total time=") {
+                                                        if let Some(val_str) = line.split('=').nth(1) {
+                                                            if let Ok(val) = val_str.trim().parse::<f64>() {
+                                                                info.total_time = val;
+                                                                updated = true;
+                                                           }
+                                                       }
+                                                    } else if line.trim().starts_with("largest residual force=") {
+                                                        if let Some(val_str) = line.split('=').nth(1) {
+                                                            if let Some(residual_str) = val_str.trim().split_whitespace().next() {
+                                                                if let Ok(residual) = residual_str.parse::<f64>() {
+                                                                    total_iterations_for_residual += 1;
+                                                                    let residual_data = ResidualData {
+                                                                        step: info.step,
+                                                                        total_iteration: total_iterations_for_residual,
+                                                                        residual,
+                                                                    };
+                                                                    if sender_clone.send(SolverMessage::Residual(residual_data)).is_err() { break; }
+                                                                }
+                                                           }
+                                                       }
+                                                   }
+
+                                                    if updated {
+                                                        if sender_clone.send(SolverMessage::UpdateStepInfo(info.clone())).is_err() { break; }
+                                                   }
+                                               }
+
+                                               if sender_clone.send(SolverMessage::Line(line)).is_err() {
+                                                   break; // Receiver has been dropped
+                                               }
+                                           }
+                                           Err(e) => {
+                                               eprintln!("Error reading line: {}", e);
+                                               break;
+                                           }
+                                       }
+                                   }
+                               });
                                 self.solver_process = Some(Arc::new(Mutex::new(child)));
                             }
                             Err(e) => {
@@ -394,16 +419,20 @@ impl eframe::App for MainApp {
                     ui.heading("Step Information");
                     egui::Grid::new("step_grid").striped(true).show(ui, |ui| {
                         ui.label("Step");
-                        ui.label("Total Time");
+                        ui.label("Increment");
+                        ui.label("Attempt");
+                        ui.label("Iterations");
                         ui.label("Step Time");
-                        ui.label("Inc Time");
+                        ui.label("Total Time");
                         ui.end_row();
 
-                        for data in &self.step_data {
+                        for data in &self.step_info {
                             ui.label(data.step.to_string());
-                            ui.label(data.total_time.to_string());
-                            ui.label(data.step_time.to_string());
-                            ui.label(data.inc_time.to_string());
+                            ui.label(data.increment.to_string());
+                            ui.label(data.attempt.to_string());
+                            ui.label(data.iterations.to_string());
+                            ui.label(format!("{:.4e}", data.step_time));
+                            ui.label(format!("{:.4e}", data.total_time));
                             ui.end_row();
                         }
                     });
