@@ -5,8 +5,9 @@ edition = "2024"
 
 [dependencies]
 dirs = "6.0.0"
-eframe = "0.31.1"
-egui = "0.31.1"
-egui_extras = "0.31.1"
+eframe = "0.27.2"
+egui = "0.27.2"
+egui_extras = "0.27.2"
+egui_plot = "0.27.2"
 serde = "1.0.219"
 serde_json = "1.0.140"

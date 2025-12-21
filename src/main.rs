@@ -3,24 +3,27 @@
 use dirs::config_dir;
 use eframe::egui;
 use serde::{Deserialize, Serialize};
-use std::fs::{File, create_dir_all};
-use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::{
+    fs::{self, create_dir_all, File},
+    io::{BufRead, BufReader, Read, Write},
+    path::PathBuf,
+    process::{Child, Command, Stdio},
+    sync::{
+        mpsc::{self, Receiver},
+        Arc, Mutex,
+    },
+    thread,
+};
 
-fn main() -> eframe::Result {
+fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([800.0, 600.0]),
         ..Default::default()
     };
     eframe::run_native(
         "CalculiX Solution Monitor",
         options,
-        Box::new(|cc| {
-            // This gives us image support:
-            egui_extras::install_image_loaders(&cc.egui_ctx);
-
-            Ok(Box::<MainApp>::default())
-        }),
+        Box::new(|cc| Box::new(MainApp::new(cc))),
     )
 }
 
@@ -45,25 +48,84 @@ enum Ansicht {
     Overview,
 }
 
-struct MainApp {
-    user_setup: UserSetup,
-    solver_output: String,
-    ansicht: Ansicht,
+#[derive(Debug, Clone)]
+struct StepData {
+    step: u32,
+    total_time: f64,
+    step_time: f64,
+    inc_time: f64,
 }
 
-impl Default for MainApp {
-    fn default() -> Self {
-        Self {
-            user_setup: Self::load_config(),
-            solver_output: String::from(
-                "TEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST\nTEST",
-            ),
-            ansicht: Ansicht::SolverOutput,
-        }
-    }
+#[derive(Debug, Clone)]
+struct ResidualData {
+    step: u32,
+    total_iteration: u32,
+    residual: f64,
+}
+
+enum SolverMessage {
+    Line(String),
+    Step(StepData),
+    Residual(ResidualData),
+}
+
+struct MainApp {
+    user_setup: UserSetup,
+    ansicht: Ansicht,
+    solver_process: Option<Arc<Mutex<Child>>>,
+    line_receiver: Option<Receiver<SolverMessage>>,
+    is_running: bool,
+    solver_output_buffer: String,
+    step_data: Vec<StepData>,
+    residual_data: Vec<ResidualData>,
+    available_inp_files: Vec<PathBuf>,
+    selected_inp_file: Option<PathBuf>,
 }
 
 impl MainApp {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // This gives us image support:
+        egui_extras::install_image_loaders(&cc.egui_ctx);
+
+        let mut app = Self {
+            user_setup: Self::load_config(),
+            ansicht: Ansicht::SolverOutput,
+            solver_process: None,
+            line_receiver: None,
+            is_running: false,
+            solver_output_buffer: String::new(),
+            step_data: Vec::new(),
+            residual_data: Vec::new(),
+            available_inp_files: Vec::new(),
+            selected_inp_file: None,
+        };
+        app.refresh_inp_files();
+        app
+    }
+
+    fn refresh_inp_files(&mut self) {
+        self.available_inp_files.clear();
+        if let Ok(entries) = fs::read_dir(&self.user_setup.project_dir_path) {
+            self.available_inp_files = entries
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    entry.path().extension().and_then(|s| s.to_str()) == Some("inp")
+                })
+                .map(|entry| entry.path())
+                .collect();
+        }
+        // If the selected file is no longer available, reset it.
+        if let Some(selected) = &self.selected_inp_file {
+            if !self.available_inp_files.contains(selected) {
+                self.selected_inp_file = None;
+            }
+        }
+        // If nothing is selected, and there are files, select the first one.
+        if self.selected_inp_file.is_none() && !self.available_inp_files.is_empty() {
+            self.selected_inp_file = self.available_inp_files.first().cloned();
+        }
+    }
+
     fn load_config() -> UserSetup {
         let config_dir = config_dir().unwrap().join("ccx_runner_rs");
 
@@ -96,31 +158,182 @@ impl MainApp {
 
 impl eframe::App for MainApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Handle solver output
+        if let Some(receiver) = &self.line_receiver {
+            while let Ok(message) = receiver.try_recv() {
+                match message {
+                    SolverMessage::Line(line) => {
+                        self.solver_output_buffer.push_str(&line);
+                        self.solver_output_buffer.push('\n');
+                    }
+                    SolverMessage::Step(data) => self.step_data.push(data),
+                    SolverMessage::Residual(data) => self.residual_data.push(data),
+                }
+                ctx.request_repaint(); // Request a repaint to show new data
+            }
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Settings");
             {
                 ui.label("Path to Calculix Binary");
                 let mut ccx_path_str = self.user_setup.calculix_bin_path.display().to_string();
-                let ccx_path_input = ui.text_edit_singleline(&mut ccx_path_str);
-                if ccx_path_input.changed() {
+                if ui.text_edit_singleline(&mut ccx_path_str).changed() {
                     self.user_setup.calculix_bin_path = PathBuf::from(ccx_path_str);
                 }
             }
             {
                 ui.label("Path to project directory");
                 let mut project_dir_str = self.user_setup.project_dir_path.display().to_string();
-                let project_dir_input = ui.text_edit_singleline(&mut project_dir_str);
-                if project_dir_input.changed() {
+                if ui.text_edit_singleline(&mut project_dir_str).changed() {
                     self.user_setup.project_dir_path = PathBuf::from(project_dir_str);
+                    self.refresh_inp_files();
                 }
             }
 
-            if ui.button("Run Analysis").clicked() {
-                match self.save_config() {
-                    Ok(_) => println!("config saved!"),
-                    Err(e) => println!("{}", e),
+            // Drop-down for .inp file
+            if !self.is_running {
+                let selected_file_name = self
+                    .selected_inp_file
+                    .as_ref()
+                    .and_then(|p| p.file_name())
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Select a file".to_string());
+
+                egui::ComboBox::from_label("Input file")
+                    .selected_text(selected_file_name)
+                    .show_ui(ui, |ui| {
+                        for f in &self.available_inp_files {
+                            let file_name = f.file_name().unwrap().to_str().unwrap().to_string();
+                            ui.selectable_value(&mut self.selected_inp_file, Some(f.clone()), file_name);
+                        }
+                    });
+            }
+
+            if self.is_running {
+                if ui.button("Stop Analysis").clicked() {
+                    if let Some(process) = self.solver_process.take() {
+                        let mut process = process.lock().unwrap();
+                        match process.kill() {
+                            Ok(_) => {
+                                println!("Process killed");
+                            }
+                            Err(e) => println!("Failed to kill process: {}", e),
+                        }
+                    }
+                    self.is_running = false;
+                    self.line_receiver = None;
                 }
-            };
+            } else {
+                if ui.button("Run Analysis").clicked() {
+                    match self.save_config() {
+                        Ok(_) => println!("config saved!"),
+                        Err(e) => println!("{}", e),
+                    }
+
+                    if let Some(inp_path) = self.selected_inp_file.clone() {
+                        let job_name = inp_path.file_stem().unwrap().to_str().unwrap();
+                        let (sender, receiver) = mpsc::channel::<SolverMessage>();
+                        self.line_receiver = Some(receiver);
+                        self.is_running = true;
+                        self.solver_output_buffer.clear();
+                        self.step_data.clear();
+                        self.residual_data.clear();
+
+                        let ccx_path = self.user_setup.calculix_bin_path.clone();
+                        let project_dir = self.user_setup.project_dir_path.clone();
+                        let job_name = job_name.to_string();
+
+                        let child = Command::new(ccx_path)
+                            .arg("-i")
+                            .arg(&job_name)
+                            .current_dir(project_dir)
+                            .stdout(Stdio::piped())
+                            .stderr(Stdio::piped())
+                            .spawn();
+
+                        match child {
+                            Ok(mut child) => {
+                                let stdout = child.stdout.take().unwrap();
+                                let reader = BufReader::new(stdout);
+                                let sender_clone = sender.clone();
+
+                                thread::spawn(move || {
+                                    let mut current_step = 0;
+                                    let mut total_iterations = 0;
+                                    let mut prev_line = String::new();
+                                    for line in reader.lines() {
+                                        match line {
+                                            Ok(line) => {
+                                                if line.starts_with(" STEP") {
+                                                    let parts: Vec<&str> = line.split_whitespace().collect();
+                                                    if parts.len() >= 8 {
+                                                        if let (Ok(step), Ok(total_time), Ok(step_time)) = (
+                                                            parts[1].parse::<u32>(),
+                                                            parts[4].parse::<f64>(),
+                                                            parts[7].parse::<f64>(),
+                                                        ) {
+                                                            current_step = step;
+                                                            let mut inc_time = 0.0;
+                                                            if prev_line.contains("Increment") {
+                                                                let prev_parts: Vec<&str> = prev_line.split_whitespace().collect();
+                                                                if prev_parts.len() >= 6 {
+                                                                    if let Ok(val) = prev_parts[5].parse::<f64>() {
+                                                                        inc_time = val;
+                                                                    }
+                                                                }
+                                                            }
+                                                            let step_data = StepData {
+                                                                step,
+                                                                total_time,
+                                                                step_time,
+                                                                inc_time,
+                                                            };
+                                                            sender_clone.send(SolverMessage::Step(step_data)).unwrap();
+                                                        }
+                                                    }
+                                                } else if line.contains("RESIDUAL") {
+                                                    let parts: Vec<&str> = line.split_whitespace().collect();
+                                                    if parts.len() >= 4 {
+                                                        if let Ok(residual) = parts[3].parse::<f64>()
+                                                        {
+                                                            total_iterations += 1;
+                                                            let residual_data = ResidualData {
+                                                                step: current_step,
+                                                                total_iteration: total_iterations,
+                                                                residual,
+                                                            };
+                                                            sender_clone.send(SolverMessage::Residual(residual_data)).unwrap();
+                                                        }
+                                                    }
+                                                }
+
+                                                prev_line = line.clone();
+                                                if sender_clone.send(SolverMessage::Line(line)).is_err() {
+                                                    break; // Receiver has been dropped
+                                                }
+                                            }
+                                            Err(e) => {
+                                                eprintln!("Error reading line: {}", e);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                });
+                                self.solver_process = Some(Arc::new(Mutex::new(child)));
+                            }
+                            Err(e) => {
+                                self.solver_output_buffer =
+                                    format!("Failed to start process: {}", e);
+                                self.is_running = false;
+                            }
+                        }
+                    } else {
+                        self.solver_output_buffer = "No '.inp' file selected.".to_string();
+                    }
+                }
+            }
 
             // Tabs
             ui.add_space(10.);
@@ -133,10 +346,31 @@ impl eframe::App for MainApp {
             match self.ansicht {
                 Ansicht::SolverOutput => {
                     ui.heading("Solver Output");
+                    egui::ScrollArea::vertical()
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            ui.label(&self.solver_output_buffer);
+                        });
                 }
 
                 Ansicht::Overview => {
-                    ui.heading("Solution Overview");
+                    // Step Table
+                    ui.heading("Step Information");
+                    egui::Grid::new("step_grid").striped(true).show(ui, |ui| {
+                        ui.label("Step");
+                        ui.label("Total Time");
+                        ui.label("Step Time");
+                        ui.label("Inc Time");
+                        ui.end_row();
+
+                        for data in &self.step_data {
+                            ui.label(data.step.to_string());
+                            ui.label(data.total_time.to_string());
+                            ui.label(data.step_time.to_string());
+                            ui.label(data.inc_time.to_string());
+                            ui.end_row();
+                        }
+                    });
                 }
             }
         });
