@@ -63,7 +63,6 @@ struct StepInfo {
     increment: u32,
     attempt: u32,
     iterations: u32,
-    step_time: f64,
     total_time: f64,
 }
 
@@ -369,7 +368,7 @@ impl eframe::App for MainApp {
                                    for line_result in reader.lines() {
                                        match line_result {
                                            Ok(line) => {
-                                               if line.starts_with(" STEP") {
+                                               if line.trim().starts_with("STEP") {
                                                    if let Some(step_str) = line.split_whitespace().last() {
                                                        if let Ok(step_num) = step_str.parse::<u32>() {
                                                             let new_info = StepInfo {
@@ -382,7 +381,7 @@ impl eframe::App for MainApp {
                                                    }
                                                } else if let Some(info) = current_step_info.as_mut() {
                                                     let mut updated = false;
-                                                    if line.starts_with(" increment ") {
+                                                    if line.trim().starts_with("increment ") {
                                                         if sender_clone.send(SolverMessage::ResetResiduals).is_err() { break; }
                                                         total_iterations_for_residual = 0;
                                                         let parts: Vec<&str> = line.split_whitespace().collect();
@@ -397,13 +396,6 @@ impl eframe::App for MainApp {
                                                     } else if line.trim().starts_with("iteration ") {
                                                         info.iterations += 1;
                                                         updated = true;
-                                                    } else if line.starts_with(" actual step time=") {
-                                                        if let Some(val_str) = line.split('=').nth(1) {
-                                                            if let Ok(val) = val_str.trim().parse::<f64>() {
-                                                                info.step_time = val;
-                                                                updated = true;
-                                                           }
-                                                       }
                                                     } else if line.starts_with(" actual total time=") {
                                                         if let Some(val_str) = line.split('=').nth(1) {
                                                             if let Ok(val) = val_str.trim().parse::<f64>() {
@@ -548,7 +540,6 @@ impl eframe::App for MainApp {
                         ui.label("Increment");
                         ui.label("Attempt");
                         ui.label("Iterations");
-                        ui.label("Step Time");
                         ui.label("Total Time");
                         ui.end_row();
 
@@ -557,7 +548,6 @@ impl eframe::App for MainApp {
                             ui.label(data.increment.to_string());
                             ui.label(data.attempt.to_string());
                             ui.label(data.iterations.to_string());
-                            ui.label(format!("{:.4e}", data.step_time));
                             ui.label(format!("{:.4e}", data.total_time));
                             ui.end_row();
                         }
