@@ -88,7 +88,7 @@ struct MainApp {
     solver_process: Option<Arc<Mutex<Child>>>,
     line_receiver: Option<Receiver<SolverMessage>>,
     is_running: bool,
-    solver_output_buffer: String,
+    solver_output_buffer: Vec<String>,
     residual_data: Vec<ResidualData>,
     step_info: Vec<StepInfo>,
     available_inp_files: Vec<PathBuf>,
@@ -105,7 +105,7 @@ impl MainApp {
             solver_process: None,
             line_receiver: None,
             is_running: false,
-            solver_output_buffer: String::new(),
+            solver_output_buffer: Vec::new(),
             residual_data: Vec::new(),
             step_info: Vec::new(),
             available_inp_files: Vec::new(),
@@ -179,8 +179,7 @@ impl eframe::App for MainApp {
                 match receiver.try_recv() {
                     Ok(message) => match message {
                         SolverMessage::Line(line) => {
-                            self.solver_output_buffer.push_str(&line);
-                            self.solver_output_buffer.push('\n');
+                            self.solver_output_buffer.push(line);
                         }
                         SolverMessage::Residual(data) => self.residual_data.push(data),
                         SolverMessage::NewStepInfo(info) => self.step_info.push(info),
@@ -200,7 +199,7 @@ impl eframe::App for MainApp {
                         self.line_receiver = None;
                         self.solver_process = None; // The Child process is dropped here, reaping it.
                         self.start_time = None;
-                        self.solver_output_buffer.push_str("\n--- Analysis Finished ---\n");
+                        self.solver_output_buffer.push("\n--- Analysis Finished ---\n".to_string());
                         break;
                     }
                 }
@@ -435,13 +434,13 @@ impl eframe::App for MainApp {
                                 self.solver_process = Some(Arc::new(Mutex::new(child)));
                             }
                             Err(e) => {
-                                self.solver_output_buffer =
-                                    format!("Failed to start process: {}", e);
+                                self.solver_output_buffer.push(
+                                    format!("Failed to start process: {}", e));
                                 self.is_running = false;
                             }
                         }
                     } else {
-                        self.solver_output_buffer = "No '.inp' file selected.".to_string();
+                        self.solver_output_buffer.push("No '.inp' file selected.".to_string());
                     }
                 }
             }
@@ -465,41 +464,48 @@ impl eframe::App for MainApp {
                             .desired_width(f32::INFINITY),
                     );
 
+                    let query = self.filter_query.trim();
+                    let filtered_lines: Vec<_> = if query.is_empty() {
+                        self.solver_output_buffer.iter().collect()
+                    } else {
+                        // DNF parsing: OR of ANDs
+                        // "a & b | c" -> OR clauses: [["a", "b"], ["c"]]
+                        let or_clauses: Vec<Vec<String>> = query
+                            .split('|')
+                            .map(|or_part| {
+                                or_part
+                                    .split('&')
+                                    .map(|s| s.trim().to_lowercase())
+                                    .filter(|s| !s.is_empty())
+                                    .collect()
+                            })
+                            .filter(|and_terms: &Vec<String>| !and_terms.is_empty())
+                            .collect();
+
+                        self.solver_output_buffer
+                            .iter()
+                            .filter(|line| {
+                                let lower_line = line.to_lowercase();
+                                // A line matches if it matches ANY of the OR clauses
+                                or_clauses.iter().any(|and_terms| {
+                                    // An OR clause matches if the line contains ALL of its AND terms
+                                    and_terms.iter().all(|term| lower_line.contains(term))
+                                })
+                            })
+                            .collect()
+                    };
+
+                    let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
+                    let num_rows = filtered_lines.len();
+
                     egui::ScrollArea::both()
                         .auto_shrink([false, false])
                         .stick_to_bottom(true)
-                        .show(ui, |ui| {
-                            let query = self.filter_query.trim();
-                            if query.is_empty() {
-                                ui.label(&self.solver_output_buffer);
-                            } else {
-                                // DNF parsing: OR of ANDs
-                                // "a & b | c" -> OR clauses: [["a", "b"], ["c"]]
-                                let or_clauses: Vec<Vec<String>> = query
-                                    .split('|')
-                                    .map(|or_part| {
-                                        or_part
-                                            .split('&')
-                                            .map(|s| s.trim().to_lowercase())
-                                            .filter(|s| !s.is_empty())
-                                            .collect()
-                                    })
-                                    .filter(|and_terms: &Vec<String>| !and_terms.is_empty())
-                                    .collect();
-
-                                let filtered_output = self.solver_output_buffer
-                                    .lines()
-                                    .filter(|line| {
-                                        let lower_line = line.to_lowercase();
-                                        // A line matches if it matches ANY of the OR clauses
-                                        or_clauses.iter().any(|and_terms| {
-                                            // An OR clause matches if the line contains ALL of its AND terms
-                                            and_terms.iter().all(|term| lower_line.contains(term))
-                                        })
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-                                ui.label(&filtered_output);
+                        .show_rows(ui, row_height, num_rows, |ui, row_range| {
+                            for i in row_range {
+                                if let Some(line) = filtered_lines.get(i) {
+                                    ui.label(egui::RichText::new(*line).monospace());
+                                }
                             }
                         });
                 }
