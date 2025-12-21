@@ -27,10 +27,16 @@ fn main() -> eframe::Result<()> {
     )
 }
 
+fn default_num_cores() -> usize {
+    std::thread::available_parallelism().map_or(1, |n| n.get())
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 struct UserSetup {
     calculix_bin_path: PathBuf,
     project_dir_path: PathBuf,
+    #[serde(default = "default_num_cores")]
+    num_cores: usize,
 }
 
 impl Default for UserSetup {
@@ -38,6 +44,7 @@ impl Default for UserSetup {
         Self {
             calculix_bin_path: PathBuf::from(""),
             project_dir_path: PathBuf::from(""),
+            num_cores: default_num_cores(),
         }
     }
 }
@@ -158,19 +165,34 @@ impl MainApp {
 
 impl eframe::App for MainApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Handle solver output
+        // Handle solver output and check for completion
         if let Some(receiver) = &self.line_receiver {
-            while let Ok(message) = receiver.try_recv() {
-                match message {
-                    SolverMessage::Line(line) => {
-                        self.solver_output_buffer.push_str(&line);
-                        self.solver_output_buffer.push('\n');
+            // Use a loop to drain the channel on each frame.
+            loop {
+                match receiver.try_recv() {
+                    Ok(message) => match message {
+                        SolverMessage::Line(line) => {
+                            self.solver_output_buffer.push_str(&line);
+                            self.solver_output_buffer.push('\n');
+                        }
+                        SolverMessage::Step(data) => self.step_data.push(data),
+                        SolverMessage::Residual(data) => self.residual_data.push(data),
+                    },
+                    Err(mpsc::TryRecvError::Empty) => {
+                        // No more messages in the channel for now.
+                        break;
                     }
-                    SolverMessage::Step(data) => self.step_data.push(data),
-                    SolverMessage::Residual(data) => self.residual_data.push(data),
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        // The sender has been dropped, meaning the reader thread and process are finished.
+                        self.is_running = false;
+                        self.line_receiver = None;
+                        self.solver_process = None; // The Child process is dropped here, reaping it.
+                        self.solver_output_buffer.push_str("\n--- Analysis Finished ---\n");
+                        break;
+                    }
                 }
-                ctx.request_repaint(); // Request a repaint to show new data
             }
+            ctx.request_repaint(); // Request a repaint to show new data
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -189,6 +211,17 @@ impl eframe::App for MainApp {
                     self.user_setup.project_dir_path = PathBuf::from(project_dir_str);
                     self.refresh_inp_files();
                 }
+            }
+
+            if !self.is_running {
+                ui.horizontal(|ui| {
+                    let max_cores = default_num_cores();
+                    ui.label("Number of Cores:");
+                    ui.add(
+                        egui::DragValue::new(&mut self.user_setup.num_cores)
+                            .clamp_range(1..=max_cores),
+                    );
+                });
             }
 
             // Drop-down for .inp file
@@ -244,10 +277,13 @@ impl eframe::App for MainApp {
                         let ccx_path = self.user_setup.calculix_bin_path.clone();
                         let project_dir = self.user_setup.project_dir_path.clone();
                         let job_name = job_name.to_string();
+                        let num_cores = self.user_setup.num_cores.to_string();
 
                         let child = Command::new(ccx_path)
                             .arg("-i")
                             .arg(&job_name)
+                            .env("OMP_NUM_THREADS", &num_cores)
+                            .env("CCX_NPROC", &num_cores)
                             .current_dir(project_dir)
                             .stdout(Stdio::piped())
                             .stderr(Stdio::piped())
