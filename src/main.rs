@@ -93,6 +93,7 @@ struct MainApp {
     available_inp_files: Vec<PathBuf>,
     selected_inp_file: Option<PathBuf>,
     start_time: Option<Instant>,
+    filter_query: String,
 }
 
 impl MainApp {
@@ -109,6 +110,7 @@ impl MainApp {
             available_inp_files: Vec::new(),
             selected_inp_file: None,
             start_time: None,
+            filter_query: String::new(),
         };
         app.refresh_inp_files();
         app
@@ -225,14 +227,20 @@ impl eframe::App for MainApp {
             {
                 ui.label("Path to Calculix Binary");
                 let mut ccx_path_str = self.user_setup.calculix_bin_path.display().to_string();
-                if ui.text_edit_singleline(&mut ccx_path_str).changed() {
+                if ui
+                    .add(egui::TextEdit::singleline(&mut ccx_path_str).desired_width(f32::INFINITY))
+                    .changed()
+                {
                     self.user_setup.calculix_bin_path = PathBuf::from(ccx_path_str);
                 }
             }
             {
                 ui.label("Path to project directory");
                 let mut project_dir_str = self.user_setup.project_dir_path.display().to_string();
-                if ui.text_edit_singleline(&mut project_dir_str).changed() {
+                if ui
+                    .add(egui::TextEdit::singleline(&mut project_dir_str).desired_width(f32::INFINITY))
+                    .changed()
+                {
                     self.user_setup.project_dir_path = PathBuf::from(project_dir_str);
                     self.refresh_inp_files();
                 }
@@ -449,10 +457,50 @@ impl eframe::App for MainApp {
             match self.ansicht {
                 Ansicht::SolverOutput => {
                     ui.heading("Solver Output");
-                    egui::ScrollArea::vertical()
+
+                    let hint = "Filter with AND (&) and OR (|). E.g. 'force & iteration | convergence'";
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.filter_query)
+                            .hint_text(hint)
+                            .desired_width(f32::INFINITY),
+                    );
+
+                    egui::ScrollArea::both()
+                        .auto_shrink([false, false])
                         .stick_to_bottom(true)
                         .show(ui, |ui| {
-                            ui.label(&self.solver_output_buffer);
+                            let query = self.filter_query.trim();
+                            if query.is_empty() {
+                                ui.label(&self.solver_output_buffer);
+                            } else {
+                                // DNF parsing: OR of ANDs
+                                // "a & b | c" -> OR clauses: [["a", "b"], ["c"]]
+                                let or_clauses: Vec<Vec<String>> = query
+                                    .split('|')
+                                    .map(|or_part| {
+                                        or_part
+                                            .split('&')
+                                            .map(|s| s.trim().to_lowercase())
+                                            .filter(|s| !s.is_empty())
+                                            .collect()
+                                    })
+                                    .filter(|and_terms: &Vec<String>| !and_terms.is_empty())
+                                    .collect();
+
+                                let filtered_output = self.solver_output_buffer
+                                    .lines()
+                                    .filter(|line| {
+                                        let lower_line = line.to_lowercase();
+                                        // A line matches if it matches ANY of the OR clauses
+                                        or_clauses.iter().any(|and_terms| {
+                                            // An OR clause matches if the line contains ALL of its AND terms
+                                            and_terms.iter().all(|term| lower_line.contains(term))
+                                        })
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                ui.label(&filtered_output);
+                            }
                         });
                 }
 
