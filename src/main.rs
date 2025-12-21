@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 use dirs::config_dir;
+use egui_plot::{Legend, Line, Plot, PlotPoints};
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -24,7 +25,7 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "CalculiX Solution Monitor",
         options,
-        Box::new(|cc| Box::new(MainApp::new(cc))),
+        Box::new(|cc| Ok(Box::new(MainApp::new(cc)))),
     )
 }
 
@@ -95,10 +96,7 @@ struct MainApp {
 }
 
 impl MainApp {
-    fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // This gives us image support:
-        egui_extras::install_image_loaders(&cc.egui_ctx);
-
+    fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         let mut app = Self {
             user_setup: Self::load_config(),
             ansicht: Ansicht::SolverOutput,
@@ -231,7 +229,7 @@ impl eframe::App for MainApp {
                     ui.label("Number of Cores:");
                     ui.add(
                         egui::DragValue::new(&mut self.user_setup.num_cores)
-                            .clamp_range(1..=max_cores),
+                            .range(1..=max_cores),
                     );
                 });
             }
@@ -291,7 +289,7 @@ impl eframe::App for MainApp {
 
                     if let Some(start_time) = self.start_time {
                         let elapsed = start_time.elapsed();
-                        ui.label(format!("{:.2}s", elapsed.as_secs_f32()));
+                        ui.label(format!("Running for: {:.1}s", elapsed.as_secs_f32()));
                         ctx.request_repaint();
                     }
                 });
@@ -444,6 +442,24 @@ impl eframe::App for MainApp {
                 }
 
                 Ansicht::Overview => {
+                    ui.heading("Residual Plot");
+                    let points: PlotPoints = self
+                        .residual_data
+                        .iter()
+                        .map(|d| [d.total_iteration as f64, d.residual])
+                        .collect();
+                    let line = Line::new(points);
+
+                    Plot::new("residual_plot")
+                        .height(250.0)
+                        .legend(Legend::default())
+                        .x_axis_label("Total Iterations")
+                        .show(ui, |plot_ui| {
+                            plot_ui.line(line.name("Largest Residual Force"));
+                        });
+
+                    ui.add_space(10.0);
+
                     // Step Table
                     ui.heading("Step Information");
                     egui::Grid::new("step_grid").striped(true).show(ui, |ui| {
