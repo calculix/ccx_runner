@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 use dirs::config_dir;
-use egui_plot::{Legend, Line, Plot, PlotPoints};
+use egui_plot::{Line, Plot, PlotPoints};
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -25,7 +25,7 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "CalculiX Solution Monitor",
         options,
-        Box::new(|cc| Ok(Box::new(MainApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(MainApp::new(cc))))
     )
 }
 
@@ -204,6 +204,21 @@ impl eframe::App for MainApp {
             }
             ctx.request_repaint(); // Request a repaint to show new data
         }
+
+        egui::TopBottomPanel::bottom("footer").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.hyperlink_to(
+                    "GitHub",
+                    "https://github.com/KwentiN-ui/ccx_runner_rs",
+                );
+                ui.separator();
+                egui::warn_if_debug_build(ui);
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    egui::widgets::global_dark_light_mode_switch(ui);
+                });
+            });
+        });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Settings");
@@ -452,10 +467,10 @@ impl eframe::App for MainApp {
 
                     Plot::new("residual_plot")
                         .height(250.0)
-                        .legend(Legend::default())
+                        .legend(egui_plot::Legend::default())
                         .x_axis_label("Total Iterations")
                         .show(ui, |plot_ui| {
-                            plot_ui.line(line.name("Largest Residual Force"));
+                            plot_ui.line(line.name("Largest Residual"));
                         });
 
                     ui.add_space(10.0);
