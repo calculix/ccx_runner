@@ -12,6 +12,7 @@ use std::{
         mpsc::{self, Receiver},
         Arc, Mutex,
     },
+    time::Instant,
     thread,
 };
 
@@ -90,6 +91,7 @@ struct MainApp {
     step_info: Vec<StepInfo>,
     available_inp_files: Vec<PathBuf>,
     selected_inp_file: Option<PathBuf>,
+    start_time: Option<Instant>,
 }
 
 impl MainApp {
@@ -108,6 +110,7 @@ impl MainApp {
             step_info: Vec::new(),
             available_inp_files: Vec::new(),
             selected_inp_file: None,
+            start_time: None,
         };
         app.refresh_inp_files();
         app
@@ -195,6 +198,7 @@ impl eframe::App for MainApp {
                         self.is_running = false;
                         self.line_receiver = None;
                         self.solver_process = None; // The Child process is dropped here, reaping it.
+                        self.start_time = None;
                         self.solver_output_buffer.push_str("\n--- Analysis Finished ---\n");
                         break;
                     }
@@ -266,32 +270,43 @@ impl eframe::App for MainApp {
                 });
             }
 
+            ui.add_space(5.0);
+
             if self.is_running {
-                if ui.button("Stop Analysis").clicked() {
-                    if let Some(process) = self.solver_process.take() {
-                        let mut process = process.lock().unwrap();
-                        match process.kill() {
-                            Ok(_) => {
-                                println!("Process killed");
+                ui.horizontal(|ui| {
+                    if ui.button("Stop Analysis").clicked() {
+                        if let Some(process) = self.solver_process.take() {
+                            let mut process = process.lock().unwrap();
+                            match process.kill() {
+                                Ok(_) => {
+                                    println!("Process killed");
+                                }
+                                Err(e) => println!("Failed to kill process: {}", e),
                             }
-                            Err(e) => println!("Failed to kill process: {}", e),
                         }
+                        self.is_running = false;
+                        self.line_receiver = None;
+                        self.start_time = None;
                     }
-                    self.is_running = false;
-                    self.line_receiver = None;
-                }
+
+                    if let Some(start_time) = self.start_time {
+                        let elapsed = start_time.elapsed();
+                        ui.label(format!("{:.2}s", elapsed.as_secs_f32()));
+                        ctx.request_repaint();
+                    }
+                });
             } else {
                 if ui.button("Run Analysis").clicked() {
                     match self.save_config() {
                         Ok(_) => {},
                         Err(e) => panic!("{}", e),
                     }
-
                     if let Some(inp_path) = self.selected_inp_file.clone() {
                         let job_name = inp_path.file_stem().unwrap().to_str().unwrap();
                         let (sender, receiver) = mpsc::channel::<SolverMessage>();
                         self.line_receiver = Some(receiver);
                         self.is_running = true;
+                        self.start_time = Some(Instant::now());
                         self.solver_output_buffer.clear();
                         self.residual_data.clear();
                         self.step_info.clear();
