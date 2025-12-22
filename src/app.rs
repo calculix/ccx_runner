@@ -201,28 +201,24 @@ impl eframe::App for MainApp {
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "Select a file".to_string());
 
-                // We use a menu_button to get a callback when the user opens the menu.
-                // This allows us to refresh the file list just-in-time, when the user clicks it.
                 ui.label("Input file");
-                ui.menu_button(selected_file_name, |ui| {
-                    self.refresh_inp_files();
+                egui::ComboBox::from_id_source("inp_file_selector")
+                    .selected_text(selected_file_name)
+                    .show_ui(ui, |ui| {
+                        self.refresh_inp_files();
 
-                    if self.available_inp_files.is_empty() {
-                        ui.label("No .inp files found.");
-                    } else {
-                        // Use a scroll area in case there are many files.
-                        egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-                            for f in &self.available_inp_files {
-                                let file_name = f.file_name().unwrap().to_str().unwrap().to_string();
-                                // `selectable_value` updates the value when clicked.
-                                // We also check `clicked()` to close the menu.
-                                if ui.selectable_value(&mut self.selected_inp_file, Some(f.clone()), &file_name).clicked() {
-                                    ui.close_menu();
+                        if self.available_inp_files.is_empty() {
+                            ui.label("No .inp files found.");
+                        } else {
+                            // Use a scroll area in case there are many files.
+                            egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                                for f in &self.available_inp_files {
+                                    let file_name = f.file_name().unwrap().to_str().unwrap().to_string();
+                                    ui.selectable_value(&mut self.selected_inp_file, Some(f.clone()), file_name);
                                 }
-                            }
-                        });
+                            });
                         }
-                });
+                    });
             }
 
             ui.add_space(5.0);
