@@ -2,6 +2,7 @@ use crate::config::{self, default_num_cores, UserSetup};
 use crate::solver::{ResidualData, SolverMessage, StepInfo};
 use eframe::egui;
 use egui_plot::{Line, Plot, PlotPoints};
+use rfd;
 use std::{
     fs,
     path::PathBuf,
@@ -141,26 +142,43 @@ impl eframe::App for MainApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Settings");
             {
-                ui.label("Path to Calculix Binary");
-                let mut ccx_path_str = self.user_setup.calculix_bin_path.display().to_string();
-                if ui
-                    .add(egui::TextEdit::singleline(&mut ccx_path_str).desired_width(f32::INFINITY))
-                    .changed()
-                {
-                    self.user_setup.calculix_bin_path = PathBuf::from(ccx_path_str);
-                }
-            }
+                                        ui.label("Path to Calculix Binary");
+                                        ui.horizontal(|ui| {
+                                            let mut ccx_path_str = self.user_setup.calculix_bin_path.display().to_string();
+                                            let response = ui.add(
+                                                egui::TextEdit::singleline(&mut ccx_path_str)
+                                                    .desired_width(ui.available_width() - 50.0),
+                                            );
+                                            if response.changed() {
+                                                self.user_setup.calculix_bin_path = PathBuf::from(ccx_path_str);
+                                            }
+                            
+                                            if ui.button("…").clicked() {
+                                                if let Some(path) = rfd::FileDialog::new().pick_file() {
+                                                    self.user_setup.calculix_bin_path = path;
+                                                }
+                                            }
+                                        });            }
             {
-                ui.label("Path to project directory");
-                let mut project_dir_str = self.user_setup.project_dir_path.display().to_string();
-                if ui
-                    .add(egui::TextEdit::singleline(&mut project_dir_str).desired_width(f32::INFINITY))
-                    .changed()
-                {
-                    self.user_setup.project_dir_path = PathBuf::from(project_dir_str);
-                    self.refresh_inp_files();
-                }
-            }
+                                        ui.label("Path to project directory");
+                                        ui.horizontal(|ui| {
+                                            let mut project_dir_str = self.user_setup.project_dir_path.display().to_string();
+                                            let response = ui.add(
+                                                egui::TextEdit::singleline(&mut project_dir_str)
+                                                    .desired_width(ui.available_width() - 50.0),
+                                            );
+                                            if response.changed() {
+                                                self.user_setup.project_dir_path = PathBuf::from(project_dir_str);
+                                                self.refresh_inp_files();
+                                            }
+                            
+                                            if ui.button("…").clicked() {
+                                                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                                                    self.user_setup.project_dir_path = path;
+                                                    self.refresh_inp_files();
+                                                }
+                                            }
+                                        });            }
 
             if !self.is_running {
                 ui.horizontal(|ui| {
