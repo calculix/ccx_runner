@@ -11,9 +11,10 @@ GUI tool for observing running CalculiX Processes.
 - [ ] Parametrization of input parameters
 
 ## Installation
-
-### Cargo
+See the releases tab to download prebuilt binaries or use
 
 ```bash
 cargo install --git https://github.com/KwentiN-ui/ccx_runner_rs.git
 ```
+
+to compile the newest version yourself. This will also make the tool available as `ccx_runner` in your terminal.
