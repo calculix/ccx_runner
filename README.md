@@ -24,7 +24,7 @@ My plan for the future is, that the runner can be used for simple preprocessing 
 See the releases tab to download prebuilt binaries or use
 
 ```bash
-cargo install --git https://github.com/KwentiN-ui/ccx_runner_rs.git
+cargo install --git https://github.com/calculix/ccx_runner.git
 ```
 
 to compile the newest version yourself. This will also make the tool available as `ccx_runner` in your terminal.
