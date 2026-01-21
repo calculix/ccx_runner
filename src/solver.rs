@@ -102,7 +102,7 @@ pub fn spawn_reader_thread(child: &mut Child, sender: Sender<SolverMessage>) {
                             }
                         } else if line.trim().starts_with("largest residual force=") {
                             if let Some(val_str) = line.split('=').nth(1) {
-                                if let Some(residual_str) = val_str.trim().split_whitespace().next()
+                                if let Some(residual_str) = val_str.split_whitespace().next()
                                 {
                                     if let Ok(residual) = residual_str.parse::<f64>() {
                                         total_iterations_for_residual += 1;
@@ -122,14 +122,13 @@ pub fn spawn_reader_thread(child: &mut Child, sender: Sender<SolverMessage>) {
                             }
                         }
 
-                        if updated {
-                            if sender_clone
+                        if updated
+                            && sender_clone
                                 .send(SolverMessage::UpdateStepInfo(info.clone()))
                                 .is_err()
                             {
                                 break;
                             }
-                        }
                     }
 
                     if sender_clone.send(SolverMessage::Line(line)).is_err() {

@@ -2,7 +2,6 @@ use crate::config::{self, default_num_cores, UserSetup};
 use crate::solver::{ResidualData, SolverMessage, StepInfo};
 use eframe::egui;
 use egui_plot::{Line, Plot, PlotPoints};
-use rfd;
 use std::{
     fs,
     path::PathBuf,
@@ -241,44 +240,42 @@ impl eframe::App for MainApp {
                         ctx.request_repaint();
                     }
                 });
-            } else {
-                if ui.button("Run Analysis").clicked() {
-                    match config::save(&self.user_setup) {
-                        Ok(_) => {} // No-op
-                        Err(e) => panic!("{}", e),
-                    }
-                    if let Some(inp_path) = self.selected_inp_file.clone() {
-                        let job_name = inp_path.file_stem().unwrap().to_str().unwrap();
-                        let (sender, receiver) = mpsc::channel::<SolverMessage>();
-                        self.line_receiver = Some(receiver);
-                        self.is_running = true;
-                        self.start_time = Some(Instant::now());
-                        self.solver_output_buffer.clear();
-                        self.residual_data.clear();
-                        self.step_info.clear();
+            } else if ui.button("Run Analysis").clicked() {
+                match config::save(&self.user_setup) {
+                    Ok(_) => {} // No-op
+                    Err(e) => panic!("{}", e),
+                }
+                if let Some(inp_path) = self.selected_inp_file.clone() {
+                    let job_name = inp_path.file_stem().unwrap().to_str().unwrap();
+                    let (sender, receiver) = mpsc::channel::<SolverMessage>();
+                    self.line_receiver = Some(receiver);
+                    self.is_running = true;
+                    self.start_time = Some(Instant::now());
+                    self.solver_output_buffer.clear();
+                    self.residual_data.clear();
+                    self.step_info.clear();
 
-                        let child = crate::solver::spawn_process(
-                            &self.user_setup.calculix_bin_path,
-                            &self.user_setup.project_dir_path,
-                            job_name,
-                            self.user_setup.num_cores,
-                        );
+                    let child = crate::solver::spawn_process(
+                        &self.user_setup.calculix_bin_path,
+                        &self.user_setup.project_dir_path,
+                        job_name,
+                        self.user_setup.num_cores,
+                    );
 
-                        match child {
-                            Ok(mut child) => {
-                                crate::solver::spawn_reader_thread(&mut child, sender);
-                                self.solver_process = Some(Arc::new(Mutex::new(child)));
-                            }
-                            Err(e) => {
-                                self.solver_output_buffer
-                                    .push(format!("Failed to start process: {}", e));
-                                self.is_running = false;
-                            }
+                    match child {
+                        Ok(mut child) => {
+                            crate::solver::spawn_reader_thread(&mut child, sender);
+                            self.solver_process = Some(Arc::new(Mutex::new(child)));
                         }
-                    } else {
-                        self.solver_output_buffer
-                            .push("No '.inp' file selected.".to_string());
+                        Err(e) => {
+                            self.solver_output_buffer
+                                .push(format!("Failed to start process: {}", e));
+                            self.is_running = false;
+                        }
                     }
+                } else {
+                    self.solver_output_buffer
+                        .push("No '.inp' file selected.".to_string());
                 }
             }
 
