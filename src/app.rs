@@ -1,13 +1,16 @@
-use crate::config::{ self, default_num_cores, UserSetup };
-use crate::solver::{ ResidualData, SolverMessage, StepInfo };
+use crate::config::{self, default_num_cores, UserSetup};
+use crate::solver::{ResidualData, SolverMessage, StepInfo};
 use eframe::egui;
-use egui_plot::{ Line, Plot, PlotPoints };
+use egui_plot::{Line, Plot, PlotPoints};
 use rfd;
 use std::{
     fs,
     path::PathBuf,
     process::Child,
-    sync::{ mpsc::{ self, Receiver }, Arc, Mutex },
+    sync::{
+        mpsc::{self, Receiver},
+        Arc, Mutex,
+    },
     time::Instant,
 };
 
@@ -57,12 +60,7 @@ impl MainApp {
         if let Ok(entries) = fs::read_dir(&self.user_setup.project_dir_path) {
             self.available_inp_files = entries
                 .filter_map(Result::ok)
-                .filter(|entry| {
-                    entry
-                        .path()
-                        .extension()
-                        .and_then(|s| s.to_str()) == Some("inp")
-                })
+                .filter(|entry| entry.path().extension().and_then(|s| s.to_str()) == Some("inp"))
                 .map(|entry| entry.path())
                 .collect();
         }
@@ -86,20 +84,19 @@ impl eframe::App for MainApp {
             // Use a loop to drain the channel on each frame.
             loop {
                 match receiver.try_recv() {
-                    Ok(message) =>
-                        match message {
-                            SolverMessage::Line(line) => {
-                                self.solver_output_buffer.push(line);
-                            }
-                            SolverMessage::Residual(data) => self.residual_data.push(data),
-                            SolverMessage::ResetResiduals => self.residual_data.clear(),
-                            SolverMessage::NewStepInfo(info) => self.step_info.push(info),
-                            SolverMessage::UpdateStepInfo(info) => {
-                                if let Some(last) = self.step_info.last_mut() {
-                                    *last = info;
-                                }
+                    Ok(message) => match message {
+                        SolverMessage::Line(line) => {
+                            self.solver_output_buffer.push(line);
+                        }
+                        SolverMessage::Residual(data) => self.residual_data.push(data),
+                        SolverMessage::ResetResiduals => self.residual_data.clear(),
+                        SolverMessage::NewStepInfo(info) => self.step_info.push(info),
+                        SolverMessage::UpdateStepInfo(info) => {
+                            if let Some(last) = self.step_info.last_mut() {
+                                *last = info;
                             }
                         }
+                    },
                     Err(mpsc::TryRecvError::Empty) => {
                         // No more messages in the channel for now.
                         break;
@@ -119,7 +116,7 @@ impl eframe::App for MainApp {
 
         egui::TopBottomPanel::bottom("footer").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.hyperlink_to("GitHub", "https://github.com/KwentiN-ui/ccx_runner_rs");
+                ui.hyperlink_to("GitHub", "https://github.com/calculix/ccx_runner");
                 egui::warn_if_debug_build(ui);
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -135,9 +132,8 @@ impl eframe::App for MainApp {
                 ui.horizontal(|ui| {
                     let mut ccx_path_str = self.user_setup.calculix_bin_path.display().to_string();
                     let response = ui.add(
-                        egui::TextEdit
-                            ::singleline(&mut ccx_path_str)
-                            .desired_width(ui.available_width() - 50.0)
+                        egui::TextEdit::singleline(&mut ccx_path_str)
+                            .desired_width(ui.available_width() - 50.0),
                     );
                     if response.changed() {
                         self.user_setup.calculix_bin_path = PathBuf::from(ccx_path_str);
@@ -153,13 +149,11 @@ impl eframe::App for MainApp {
             {
                 ui.label("Path to project directory");
                 ui.horizontal(|ui| {
-                    let mut project_dir_str = self.user_setup.project_dir_path
-                        .display()
-                        .to_string();
+                    let mut project_dir_str =
+                        self.user_setup.project_dir_path.display().to_string();
                     let response = ui.add(
-                        egui::TextEdit
-                            ::singleline(&mut project_dir_str)
-                            .desired_width(ui.available_width() - 50.0)
+                        egui::TextEdit::singleline(&mut project_dir_str)
+                            .desired_width(ui.available_width() - 50.0),
                     );
                     if response.changed() {
                         self.user_setup.project_dir_path = PathBuf::from(project_dir_str);
@@ -180,14 +174,15 @@ impl eframe::App for MainApp {
                     let max_cores = default_num_cores();
                     ui.label("Number of Cores:");
                     ui.add(
-                        egui::DragValue::new(&mut self.user_setup.num_cores).range(1..=max_cores)
+                        egui::DragValue::new(&mut self.user_setup.num_cores).range(1..=max_cores),
                     );
                 });
             }
 
             // Drop-down for .inp file
             if !self.is_running {
-                let selected_file_name = self.selected_inp_file
+                let selected_file_name = self
+                    .selected_inp_file
                     .as_ref()
                     .and_then(|p| p.file_name())
                     .and_then(|s| s.to_str())
@@ -195,8 +190,7 @@ impl eframe::App for MainApp {
                     .unwrap_or_else(|| "Select a file".to_string());
 
                 ui.label("Input file");
-                egui::ComboBox
-                    ::from_id_source("inp_file_selector")
+                egui::ComboBox::from_id_source("inp_file_selector")
                     .selected_text(selected_file_name)
                     .show_ui(ui, |ui| {
                         self.refresh_inp_files();
@@ -205,21 +199,16 @@ impl eframe::App for MainApp {
                             ui.label("No .inp files found.");
                         } else {
                             // Use a scroll area in case there are many files.
-                            egui::ScrollArea
-                                ::vertical()
+                            egui::ScrollArea::vertical()
                                 .max_height(200.0)
                                 .show(ui, |ui| {
                                     for f in &self.available_inp_files {
-                                        let file_name = f
-                                            .file_name()
-                                            .unwrap()
-                                            .to_str()
-                                            .unwrap()
-                                            .to_string();
+                                        let file_name =
+                                            f.file_name().unwrap().to_str().unwrap().to_string();
                                         ui.selectable_value(
                                             &mut self.selected_inp_file,
                                             Some(f.clone()),
-                                            file_name
+                                            file_name,
                                         );
                                     }
                                 });
@@ -272,7 +261,7 @@ impl eframe::App for MainApp {
                             &self.user_setup.calculix_bin_path,
                             &self.user_setup.project_dir_path,
                             job_name,
-                            self.user_setup.num_cores
+                            self.user_setup.num_cores,
                         );
 
                         match child {
@@ -281,14 +270,14 @@ impl eframe::App for MainApp {
                                 self.solver_process = Some(Arc::new(Mutex::new(child)));
                             }
                             Err(e) => {
-                                self.solver_output_buffer.push(
-                                    format!("Failed to start process: {}", e)
-                                );
+                                self.solver_output_buffer
+                                    .push(format!("Failed to start process: {}", e));
                                 self.is_running = false;
                             }
                         }
                     } else {
-                        self.solver_output_buffer.push("No '.inp' file selected.".to_string());
+                        self.solver_output_buffer
+                            .push("No '.inp' file selected.".to_string());
                     }
                 }
             }
@@ -308,10 +297,9 @@ impl eframe::App for MainApp {
                     let hint =
                         "Filter with AND (&) and OR (|). E.g. 'force & iteration | convergence'";
                     ui.add(
-                        egui::TextEdit
-                            ::singleline(&mut self.filter_query)
+                        egui::TextEdit::singleline(&mut self.filter_query)
                             .hint_text(hint)
-                            .desired_width(f32::INFINITY)
+                            .desired_width(f32::INFINITY),
                     );
 
                     let query = self.filter_query.trim();
@@ -348,8 +336,7 @@ impl eframe::App for MainApp {
                     let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
                     let num_rows = filtered_lines.len();
 
-                    egui::ScrollArea
-                        ::both()
+                    egui::ScrollArea::both()
                         .auto_shrink([false, false])
                         .stick_to_bottom(true)
                         .show_rows(ui, row_height, num_rows, |ui, row_range| {
@@ -363,7 +350,8 @@ impl eframe::App for MainApp {
 
                 Ansicht::Overview => {
                     ui.heading("Residual Plot");
-                    let points: PlotPoints = self.residual_data
+                    let points: PlotPoints = self
+                        .residual_data
                         .iter()
                         .map(|d| [d.total_iteration as f64, d.residual])
                         .collect();
@@ -381,26 +369,23 @@ impl eframe::App for MainApp {
 
                     // Step Table
                     ui.heading("Step Information");
-                    egui::Grid
-                        ::new("step_grid")
-                        .striped(true)
-                        .show(ui, |ui| {
-                            ui.label("Step");
-                            ui.label("Increment");
-                            ui.label("Attempt");
-                            ui.label("Iterations");
-                            ui.label("Total Time");
-                            ui.end_row();
+                    egui::Grid::new("step_grid").striped(true).show(ui, |ui| {
+                        ui.label("Step");
+                        ui.label("Increment");
+                        ui.label("Attempt");
+                        ui.label("Iterations");
+                        ui.label("Total Time");
+                        ui.end_row();
 
-                            for data in &self.step_info {
-                                ui.label(data.step.to_string());
-                                ui.label(data.increment.to_string());
-                                ui.label(data.attempt.to_string());
-                                ui.label(data.iterations.to_string());
-                                ui.label(format!("{:.4e}", data.total_time));
-                                ui.end_row();
-                            }
-                        });
+                        for data in &self.step_info {
+                            ui.label(data.step.to_string());
+                            ui.label(data.increment.to_string());
+                            ui.label(data.attempt.to_string());
+                            ui.label(data.iterations.to_string());
+                            ui.label(format!("{:.4e}", data.total_time));
+                            ui.end_row();
+                        }
+                    });
                 }
             }
         });
