@@ -60,9 +60,7 @@ impl MainApp {
         if let Ok(entries) = fs::read_dir(&self.user_setup.project_dir_path) {
             self.available_inp_files = entries
                 .filter_map(Result::ok)
-                .filter(|entry| {
-                    entry.path().extension().and_then(|s| s.to_str()) == Some("inp")
-                })
+                .filter(|entry| entry.path().extension().and_then(|s| s.to_str()) == Some("inp"))
                 .map(|entry| entry.path())
                 .collect();
         }
@@ -105,19 +103,10 @@ impl eframe::App for MainApp {
                     }
                     Err(mpsc::TryRecvError::Disconnected) => {
                         // The sender has been dropped, meaning the reader thread and process are finished.
-                        let elapsed_time = if let Some(start_time) = self.start_time {
-                            start_time.elapsed().as_secs_f32()
-                        } else {
-                            0.0
-                        };
                         self.is_running = false;
                         self.line_receiver = None;
                         self.solver_process = None; // The Child process is dropped here, reaping it.
                         self.start_time = None;
-                        self.solver_output_buffer.push(format!(
-                            "\n--- Analysis Finished in {:.1}s ---\n",
-                            elapsed_time
-                        ));
                         break;
                     }
                 }
@@ -127,10 +116,7 @@ impl eframe::App for MainApp {
 
         egui::TopBottomPanel::bottom("footer").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.hyperlink_to(
-                    "GitHub",
-                    "https://github.com/KwentiN-ui/ccx_runner_rs",
-                );
+                ui.hyperlink_to("GitHub", "https://github.com/calculix/ccx_runner");
                 egui::warn_if_debug_build(ui);
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -142,51 +128,53 @@ impl eframe::App for MainApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Settings");
             {
-                                        ui.label("Path to Calculix Binary");
-                                        ui.horizontal(|ui| {
-                                            let mut ccx_path_str = self.user_setup.calculix_bin_path.display().to_string();
-                                            let response = ui.add(
-                                                egui::TextEdit::singleline(&mut ccx_path_str)
-                                                    .desired_width(ui.available_width() - 50.0),
-                                            );
-                                            if response.changed() {
-                                                self.user_setup.calculix_bin_path = PathBuf::from(ccx_path_str);
-                                            }
-                            
-                                            if ui.button("…").clicked() {
-                                                if let Some(path) = rfd::FileDialog::new().pick_file() {
-                                                    self.user_setup.calculix_bin_path = path;
-                                                }
-                                            }
-                                        });            }
+                ui.label("Path to Calculix Binary");
+                ui.horizontal(|ui| {
+                    let mut ccx_path_str = self.user_setup.calculix_bin_path.display().to_string();
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut ccx_path_str)
+                            .desired_width(ui.available_width() - 50.0),
+                    );
+                    if response.changed() {
+                        self.user_setup.calculix_bin_path = PathBuf::from(ccx_path_str);
+                    }
+
+                    if ui.button("…").clicked() {
+                        if let Some(path) = rfd::FileDialog::new().pick_file() {
+                            self.user_setup.calculix_bin_path = path;
+                        }
+                    }
+                });
+            }
             {
-                                        ui.label("Path to project directory");
-                                        ui.horizontal(|ui| {
-                                            let mut project_dir_str = self.user_setup.project_dir_path.display().to_string();
-                                            let response = ui.add(
-                                                egui::TextEdit::singleline(&mut project_dir_str)
-                                                    .desired_width(ui.available_width() - 50.0),
-                                            );
-                                            if response.changed() {
-                                                self.user_setup.project_dir_path = PathBuf::from(project_dir_str);
-                                                self.refresh_inp_files();
-                                            }
-                            
-                                            if ui.button("…").clicked() {
-                                                if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                                                    self.user_setup.project_dir_path = path;
-                                                    self.refresh_inp_files();
-                                                }
-                                            }
-                                        });            }
+                ui.label("Path to project directory");
+                ui.horizontal(|ui| {
+                    let mut project_dir_str =
+                        self.user_setup.project_dir_path.display().to_string();
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut project_dir_str)
+                            .desired_width(ui.available_width() - 50.0),
+                    );
+                    if response.changed() {
+                        self.user_setup.project_dir_path = PathBuf::from(project_dir_str);
+                        self.refresh_inp_files();
+                    }
+
+                    if ui.button("…").clicked() {
+                        if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                            self.user_setup.project_dir_path = path;
+                            self.refresh_inp_files();
+                        }
+                    }
+                });
+            }
 
             if !self.is_running {
                 ui.horizontal(|ui| {
                     let max_cores = default_num_cores();
                     ui.label("Number of Cores:");
                     ui.add(
-                        egui::DragValue::new(&mut self.user_setup.num_cores)
-                            .range(1..=max_cores),
+                        egui::DragValue::new(&mut self.user_setup.num_cores).range(1..=max_cores),
                     );
                 });
             }
@@ -211,12 +199,19 @@ impl eframe::App for MainApp {
                             ui.label("No .inp files found.");
                         } else {
                             // Use a scroll area in case there are many files.
-                            egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-                                for f in &self.available_inp_files {
-                                    let file_name = f.file_name().unwrap().to_str().unwrap().to_string();
-                                    ui.selectable_value(&mut self.selected_inp_file, Some(f.clone()), file_name);
-                                }
-                            });
+                            egui::ScrollArea::vertical()
+                                .max_height(200.0)
+                                .show(ui, |ui| {
+                                    for f in &self.available_inp_files {
+                                        let file_name =
+                                            f.file_name().unwrap().to_str().unwrap().to_string();
+                                        ui.selectable_value(
+                                            &mut self.selected_inp_file,
+                                            Some(f.clone()),
+                                            file_name,
+                                        );
+                                    }
+                                });
                         }
                     });
             }
@@ -249,7 +244,7 @@ impl eframe::App for MainApp {
             } else {
                 if ui.button("Run Analysis").clicked() {
                     match config::save(&self.user_setup) {
-                        Ok(_) => {}, // No-op
+                        Ok(_) => {} // No-op
                         Err(e) => panic!("{}", e),
                     }
                     if let Some(inp_path) = self.selected_inp_file.clone() {
@@ -275,19 +270,20 @@ impl eframe::App for MainApp {
                                 self.solver_process = Some(Arc::new(Mutex::new(child)));
                             }
                             Err(e) => {
-                                self.solver_output_buffer.push(
-                                    format!("Failed to start process: {}", e));
+                                self.solver_output_buffer
+                                    .push(format!("Failed to start process: {}", e));
                                 self.is_running = false;
                             }
                         }
                     } else {
-                        self.solver_output_buffer.push("No '.inp' file selected.".to_string());
+                        self.solver_output_buffer
+                            .push("No '.inp' file selected.".to_string());
                     }
                 }
             }
 
             // Tabs
-            ui.add_space(10.);
+            ui.add_space(10.0);
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.ansicht, Ansicht::SolverOutput, "Solver Output");
                 ui.selectable_value(&mut self.ansicht, Ansicht::Overview, "Overview");
@@ -298,7 +294,8 @@ impl eframe::App for MainApp {
                 Ansicht::SolverOutput => {
                     ui.heading("Solver Output");
 
-                    let hint = "Filter with AND (&) and OR (|). E.g. 'force & iteration | convergence'";
+                    let hint =
+                        "Filter with AND (&) and OR (|). E.g. 'force & iteration | convergence'";
                     ui.add(
                         egui::TextEdit::singleline(&mut self.filter_query)
                             .hint_text(hint)
